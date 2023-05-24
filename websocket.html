@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>语音转文本 webapi websocket 示例</title>
+    <script src="./static/js/jquery-3.2.1.min.js"></script>
+    <script src="./static/js/recorder/recorder-core.js"></script>
+    <script src="./static/js/recorder/extensions/lib.fft.js"></script>
+    <script src="./static/js/recorder/extensions/frequency.histogram.view.js"></script>
+    <script src="./static/js/recorder/engine/wav.js"></script>
+    <script src="./static/js/SoundRecognizer.js"></script>
+    <script src="./static/js/vue.js"></script>
+    <script src="./static/js/crypto-js.js"></script>
+    <link rel="stylesheet" href="./static/css/style.css">
+    <link rel="stylesheet" href="./static/css/font-awesome.min.css">
+</head>
+<body>
+<div id="app" class="container">
+    <div class="header">
+        <img src="./static/image/logo.png" style="margin-left: 20px">
+    </div>
+    <div class="audio_result">
+        <div class="result-text">{{textAreaCon}}</div>
+    </div>
+    <div class="audio_button" @click="startRecording" v-if="!started">
+        <span>点击说话</span>
+    </div>
+    <div class="audio_button" v-else @click="stopRecording">
+        <span>结束说话{{ seconds ? '(' + seconds + 's)' : '' }}</span>
+    </div>
+</div>
+<script>
+    // 创建 Vue 实例
+    var app = new Vue({
+        // 指定容器的选择器
+        el: '#app',
+        // 定义数据
+        data: {
+            url: 'wss://k8s.arity.cn/asr/ws',
+            webSocket: null,
+            result: '', // 临时文本内容
+            textAreaCon: '', // 文本内容
+            started: false, // 是否开始链接websouket
+            timeLoop: null, // 倒计时定时器
+            seconds: 60,
+            verify: false,
+            btId: '',
+            requestId: '',
+            accessKey: '企业自己的accessKey',
+            accessKeySecret: '企业自己的accessKeySecret',
+            appCode: '企业自己的appCode',
+            channelCode: '企业自己的channelCode'
+        },
+        mounted() {
+
+        },
+        methods: {
+            // 生成签名
+            generateSignature(accessKey, accessKeySecret, appCode) {
+                // 获取当前时间戳（毫秒级）
+                var timestamp = Date.now().toString();
+
+                // 将签名参数按照字典序排序
+                var params = {
+                    accessKey: accessKey,
+                    accessKeySecret: accessKeySecret,
+                    appCode: appCode,
+                    timestamp: timestamp
+                };
+                var sortedKeys = Object.keys(params).sort();
+                var signStr = '';
+                for (var i = 0; i < sortedKeys.length; i++) {
+                    var key = sortedKeys[i];
+                    signStr += key + params[key];
+                }
+
+                // 计算签名
+                var md5Str = CryptoJS.MD5(signStr).toString().toUpperCase();
+
+                return {
+                    signature: md5Str,
+                    timestamp: timestamp
+                };
+            },
+            // 生成n位数的随机数
+            randomNum(n) {
+                var res = "";
+                for (var i = 0; i < n; i++) {
+                    res += Math.floor(Math.random() * 10);
+                }
+                return res;
+            },
+            // 拼接参数
+            getWebSocketUrl() {
+                this.btId = this.randomNum(24)
+                let signResult = this.generateSignature(this.accessKey, this.accessKeySecret, this.appCode)
+                let completeUrl = `${this.url}?accessKey=${this.accessKey}&appCode=${this.appCode}&btId=${this.btId}&sign=${signResult.signature}&timestamp=${signResult.timestamp}&channelCode=${this.appCode}`
+                this.verify = false
+                return completeUrl;
+            },
+            // 连接websocket
+            openWebSocket(url) {
+                if ("WebSocket" in window) {
+                    this.webSocket = new WebSocket(url);
+                    this.webSocket.onopen = (() => {
+                        console.log("Websocket 连接成功，开始识别")
+                        this.webSocket.send(JSON.stringify({
+                            "signal": "start",
+                            "nbest": 1,
+                            "continuous_decoding": true
+                        }))
+                    })
+                    this.webSocket.onmessage = ((msg) => {
+                        this.parseResult(msg.data)
+                    })
+                    this.webSocket.onclose = () => {
+                        console.log("WebSocket 连接断开")
+                        if (this.result.length > 0) {
+                            if (this.result.endsWith("，")) {
+                                this.result = this.result.slice(0, -1)
+                            }
+                            this.textAreaCon = this.result + "。"
+                            this.result = ""
+                        }
+                    }
+                    this.webSocket.onerror = () => {
+                        console.log("WebSocket 连接失败")
+                    }
+                }
+            },
+            // 解析返回数据
+            parseResult(data) {
+                var data = JSON.parse(data)
+                if (data.type === 'partial_result') {
+                    nbest = JSON.parse(data.nbest)
+                    var sentence = nbest[0].sentence
+                    if (sentence.length > 0) {
+                        this.textAreaCon = this.result + sentence
+                    }
+                } else if (data.type === 'final_result') {
+                    nbest = JSON.parse(data.nbest)
+                    var sentence = nbest[0].sentence
+                    if (sentence.length > 0) {
+                        this.result += sentence + "，"
+                        this.textAreaCon = this.result
+                    }
+                    console.log(nbest)
+                }  else if (data.type === 'verify') {
+                    console.log('获取到校验结果消息', data)
+                    this.requestId = data.requestId
+                    if (data.status === 'ok') {
+                        console.log('校验通过')
+                        this.verify = true
+                    } else {
+                        alert("校验不通过");
+                        this.verify = false
+                        this.stopRecording()
+                    }
+                }
+            },
+            // 开始讲话
+            startRecording() {
+                let socketUrl = this.getWebSocketUrl()
+                this.openWebSocket(socketUrl)
+                let then = this
+                SoundRecognizer.init({
+                    soundType: 'wav',
+                    sampleRate: 16000,
+                    translerCallBack: (number, blobOrNull, duration, blobRec, isClose) => {
+                        if (blobOrNull) {
+                            var blob = blobOrNull
+                            var encTime = blob.encTime
+                            var reader = new FileReader()
+                            reader.onloadend = function () {
+                                if (then.webSocket != null && then.verify === true) {
+                                    then.webSocket.send(reader.result)
+                                }
+                            }
+                            reader.readAsArrayBuffer(blob)
+                        }
+                    }
+                })
+                this.started = true
+                this.seconds = 60
+                this.timeLoop = setInterval(() => {
+                    this.seconds--
+                    if (this.seconds === 0) {
+                        this.stopRecording()
+                    }
+                }, 1000)
+            },
+            // 结束讲话
+            stopRecording() {
+                this.started = false
+                SoundRecognizer.recordClose()
+                clearInterval(this.timeLoop)
+                this.webSocket.send(JSON.stringify({"signal": "end"}))
+            }
+        }
+    })
+</script>
+</body>
+</html>

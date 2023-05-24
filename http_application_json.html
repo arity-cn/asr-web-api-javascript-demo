@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>语音转文本 webapi http application/json 示例</title>
+    <script src="./static/js/jquery-3.2.1.min.js"></script>
+    <script src="./static/js/vue.js"></script>
+    <script src="./static/js/crypto-js.js"></script>
+    <script src="./static/js/axios.min.js"></script>
+    <link rel="stylesheet" href="./static/css/style.css">
+    <link rel="stylesheet" href="./static/css/font-awesome.min.css">
+</head>
+<body>
+<div id="app" class="container">
+    <div class="header">
+        <img src="./static/image/logo.png" style="margin-left: 20px">
+    </div>
+    <div class="file-select-box">
+        <input type="file" id="file-input" @change="handleFileChange">
+    </div>
+    <div class="audio_result" style="margin-top: 30px">
+        <div class="result-text">{{textAreaCon}}</div>
+        <div class="feedback" @click="showFeedbackOptions" v-if="feedbackButton === true">
+            <span>反馈</span>
+        </div>
+    </div>
+    <div class="asr_button" @click="toText">
+        <span>语音识别</span>
+    </div>
+    <div class="modal-mask" v-if="feedbackModal === true">
+    </div>
+    <div class="modal-wrap" v-if="feedbackModal === true">
+        <div class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <span class="modal-header-title">语音识别是否准确</span>
+                    <i class="fa fa-times" @click="feedbackModal = false"></i>
+                </div>
+                <div class="modal-body">
+                    <div class="modal_button" @click="feedback(0)">
+                        <span>准确</span>
+                    </div>
+                    <div class="modal_button" @click="feedback(1)" style="background: #d22727">
+                        <span>不准确</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+    // 创建 Vue 实例
+    var app = new Vue({
+        // 指定容器的选择器
+        el: '#app',
+        // 定义数据
+        data: {
+            toTextUrl: 'https://k8s.arity.cn/asr/http/asr/toText',
+            feedbackUrl: 'https://k8s.arity.cn/asr/http/asr/V1/feedback',
+            textAreaCon: '', // 语音识别内容
+            fileName: '',
+            fileBase64: null,
+            btId: '',
+            requestId: null,
+            accessKey: '企业自己的accessKey',
+            accessKeySecret: '企业自己的accessKeySecret',
+            appCode: '企业自己的appCode',
+            channelCode: '企业自己的channelCode',
+            feedbackButton: false,
+            feedbackModal: false
+        },
+        mounted() {
+
+        },
+        methods: {
+            // 生成签名
+            generateSignature(accessKey, accessKeySecret, appCode) {
+                // 获取当前时间戳（毫秒级）
+                var timestamp = Date.now().toString();
+
+                // 将签名参数按照字典序排序
+                var params = {
+                    accessKey: accessKey,
+                    accessKeySecret: accessKeySecret,
+                    appCode: appCode,
+                    timestamp: timestamp
+                };
+                var sortedKeys = Object.keys(params).sort();
+                var signStr = '';
+                for (var i = 0; i < sortedKeys.length; i++) {
+                    var key = sortedKeys[i];
+                    signStr += key + params[key];
+                }
+
+                // 计算签名
+                var md5Str = CryptoJS.MD5(signStr).toString().toUpperCase();
+
+                return {
+                    signature: md5Str,
+                    timestamp: timestamp
+                };
+            },
+            // 生成n位数的随机数
+            randomNum(n) {
+                var res = "";
+                for (var i = 0; i < n; i++) {
+                    res += Math.floor(Math.random() * 10);
+                }
+                return res;
+            },
+            handleFileChange(event) {
+                const file = event.target.files[0];
+                this.fileName = file.name;
+                const reader = new FileReader();
+                reader.onload = () => {
+                    this.fileBase64 = btoa(reader.result);
+                };
+                reader.readAsBinaryString(file);
+            },
+            getAudioFormat() {
+                if (this.fileName == null || this.fileName === '') {
+                    alert("文件的文件名为空");
+                    return null;
+                }
+                let format = this.fileName.substring(this.fileName.lastIndexOf('.') + 1);
+                if (format == null || format === '') {
+                    alert("文件后缀为空");
+                    return null;
+                }
+                if (format === 'wav' || format === 'WAV') {
+                    return 'WAV';
+                }
+                if (format === 'pcm' || format === 'PCM') {
+                    return 'PCM';
+                }
+                if (format === 'mp3' || format === 'MP3') {
+                    return 'MP3';
+                }
+                if (format === 'spx' || format === 'SPX') {
+                    return 'SPEEX_WB'
+                }
+                alert(format + "类型音频暂不支持");
+                return null;
+            },
+            toText() {
+                if (this.fileBase64 == null) {
+                    alert("请选择文件再进行语音识别");
+                    return;
+                }
+                this.btId = this.randomNum(24)
+                let signResult = this.generateSignature(this.accessKey, this.accessKeySecret, this.appCode)
+                let format = this.getAudioFormat()
+                if (format == null) {
+                    return
+                }
+                const loadingElement = document.createElement('div');
+                loadingElement.classList.add('loading');
+                document.body.appendChild(loadingElement);
+                this.textAreaCon = null
+                axios.post(this.toTextUrl, {
+                    btId: this.btId,
+                    accessKey: this.accessKey,
+                    appCode: this.appCode,
+                    channelCode: this.channelCode,
+                    contentType: "RAW",
+                    formatInfo: format,
+                    content: this.fileBase64,
+                    timestamp: signResult.timestamp,
+                    sign: signResult.signature
+                })
+                .then((response) => {
+                    console.log(response);
+                    if (response.status === 200) {
+                        if (response.data.success) {
+                            this.requestId = response.data.requestId;
+                            this.textAreaCon = response.data.data.audioText;
+                            this.feedbackButton = true;
+                        } else {
+                            alert("识别失败, 原因：" + response.data.msg);
+                            this.feedbackButton = false;
+                        }
+                    } else {
+                        alert("请求失败，httpCode: " + response.status);
+                        this.feedbackButton = false;
+                    }
+                    document.body.removeChild(loadingElement);
+                })
+                .catch(function (error) {
+                    console.log(error);
+                    document.body.removeChild(loadingElement);
+                    this.feedbackButton = false;
+                });
+            },
+            showFeedbackOptions() {
+                this.feedbackModal = true;
+            },
+            feedback(exactType) {
+                let signResult = this.generateSignature(this.accessKey, this.accessKeySecret, this.appCode)
+                const loadingElement = document.createElement('div');
+                loadingElement.classList.add('loading');
+                document.body.appendChild(loadingElement);
+                axios.post(this.feedbackUrl, {
+                    btId: this.btId,
+                    requestId: this.requestId,
+                    accessKey: this.accessKey,
+                    appCode: this.appCode,
+                    channelCode: this.channelCode,
+                    exactType: exactType,
+                    timestamp: signResult.timestamp,
+                    sign: signResult.signature
+                })
+                .then((response) => {
+                    console.log(response);
+                    if (response.status === 200) {
+                        if (response.data.success) {
+                            alert("反馈成功");
+                            this.feedbackModal = false
+                        } else {
+                            alert("反馈失败, 原因：" + response.data.msg);
+                        }
+                    } else {
+                        alert("请求失败，httpCode: " + response.status);
+                    }
+                    document.body.removeChild(loadingElement);
+                })
+                .catch(function (error) {
+                    console.log(error);
+                    document.body.removeChild(loadingElement);
+                });
+            }
+        }
+    })
+</script>
+</body>
+</html>

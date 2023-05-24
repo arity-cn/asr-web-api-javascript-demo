@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>语音转文本 webapi http application/json 示例</title>
+    <script src="./static/js/jquery-3.2.1.min.js"></script>
+    <script src="./static/js/vue.js"></script>
+    <script src="./static/js/crypto-js.js"></script>
+    <script src="./static/js/axios.min.js"></script>
+    <link rel="stylesheet" href="./static/css/style.css">
+    <link rel="stylesheet" href="./static/css/font-awesome.min.css">
+</head>
+<body>
+<div id="app" class="container">
+    <div class="header">
+        <img src="./static/image/logo.png" style="margin-left: 20px">
+    </div>
+    <div class="file-select-box">
+        <input type="file" id="file-input" @change="handleFileChange">
+    </div>
+    <div class="audio_result" style="margin-top: 30px">
+        <div class="result-text">{{textAreaCon}}</div>
+    </div>
+    <div class="asr_button" @click="toText">
+        <span>语音识别</span>
+    </div>
+</div>
+<script>
+    // 创建 Vue 实例
+    var app = new Vue({
+        // 指定容器的选择器
+        el: '#app',
+        // 定义数据
+        data: {
+            url: 'https://k8s.arity.cn/asr/http/asr/toTextBinary',
+            textAreaCon: '', // 语音识别内容
+            fileName: '',
+            file: null,
+            btId: '',
+            requestId: '',
+            accessKey: '企业自己的accessKey',
+            accessKeySecret: '企业自己的accessKeySecret',
+            appCode: '企业自己的appCode',
+            channelCode: '企业自己的channelCode'
+        },
+        mounted() {
+
+        },
+        methods: {
+            // 生成签名
+            generateSignature(accessKey, accessKeySecret, appCode) {
+                // 获取当前时间戳（毫秒级）
+                var timestamp = Date.now().toString();
+
+                // 将签名参数按照字典序排序
+                var params = {
+                    accessKey: accessKey,
+                    accessKeySecret: accessKeySecret,
+                    appCode: appCode,
+                    timestamp: timestamp
+                };
+                var sortedKeys = Object.keys(params).sort();
+                var signStr = '';
+                for (var i = 0; i < sortedKeys.length; i++) {
+                    var key = sortedKeys[i];
+                    signStr += key + params[key];
+                }
+
+                // 计算签名
+                var md5Str = CryptoJS.MD5(signStr).toString().toUpperCase();
+
+                return {
+                    signature: md5Str,
+                    timestamp: timestamp
+                };
+            },
+            // 生成n位数的随机数
+            randomNum(n) {
+                var res = "";
+                for (var i = 0; i < n; i++) {
+                    res += Math.floor(Math.random() * 10);
+                }
+                return res;
+            },
+            handleFileChange(event) {
+                this.file = event.target.files[0];
+                this.fileName = this.file.name;
+            },
+            getAudioFormat() {
+                if (this.fileName == null || this.fileName === '') {
+                    alert("文件的文件名为空");
+                    return null;
+                }
+                let format = this.fileName.substring(this.fileName.lastIndexOf('.') + 1);
+                if (format == null || format === '') {
+                    alert("文件后缀为空");
+                    return null;
+                }
+                if (format === 'wav' || format === 'WAV') {
+                    return 'WAV';
+                }
+                if (format === 'pcm' || format === 'PCM') {
+                    return 'PCM';
+                }
+                if (format === 'mp3' || format === 'MP3') {
+                    return 'MP3';
+                }
+                if (format === 'spx' || format === 'SPX') {
+                    return 'SPEEX_WB'
+                }
+                alert(format + "类型音频暂不支持");
+                return null;
+            },
+            toText() {
+                if (this.file == null) {
+                    alert("请选择文件再进行语音识别");
+                    return;
+                }
+                this.btId = this.randomNum(24)
+                let signResult = this.generateSignature(this.accessKey, this.accessKeySecret, this.appCode)
+                let format = this.getAudioFormat()
+                if (format == null) {
+                    return
+                }
+                const loadingElement = document.createElement('div');
+                loadingElement.classList.add('loading');
+                document.body.appendChild(loadingElement);
+                this.textAreaCon = null
+                const formData = new FormData();
+                formData.append('btId', this.btId);
+                formData.append('accessKey', this.accessKey);
+                formData.append('appCode', this.appCode);
+                formData.append('channelCode', this.channelCode);
+                formData.append('timestamp', signResult.timestamp);
+                formData.append('sign', signResult.signature);
+                formData.append('sampleRateEnum', 'SAMPLE_RATE_16K');
+                formData.append('file', this.file);
+                axios.post(this.url, formData, {
+                    headers: {
+                        'Content-Type': 'multipart/form-data',
+                    }
+                })
+                .then((response) => {
+                    console.log(response);
+                    if (response.status === 200) {
+                        if (response.data.success === true) {
+                            this.textAreaCon = response.data.data.audioText
+                        } else {
+                            alert("识别失败, 原因：" + response.data.msg)
+                        }
+                    } else {
+                        alert("请求失败，httpCode: " + response.status)
+                    }
+                    document.body.removeChild(loadingElement);
+                })
+                .catch(function (error) {
+                    console.log(error);
+                    document.body.removeChild(loadingElement);
+                });
+            }
+        }
+    })
+</script>
+</body>
+</html>
